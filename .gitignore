@@ -1,0 +1,8 @@
+# Just whitelist, as repo may sit in home-dir
+*
+!/.gitignore
+
+!/add-subdomain
+!/update-certificates
+
+!/config.sh.example

@@ -1,0 +1,18 @@
+# Let's Encrypt config
+LE_CLIENT_BASEDIR="./letsencrypt.sh"
+LE_CLIENT_DOMAINFILE="${LE_CLIENT_BASEDIR}/domains.txt"
+LE_CLIENT_EXECUTABLE="${LE_CLIENT_BASEDIR}/letsencrypt.sh"
+LE_CLIENT_HOOKSFILE="${LE_CLIENT_BASEDIR}/hooks.sh"
+LE_CLIENT_CONFIGFILE="${LE_CLIENT_BASEDIR}/config.sh"
+
+# File containing certificates
+CERTIFICATES_PATH_FILE="$[Location of generated certificates index]"
+
+# Let's Encrypt Limits
+MAX_CERTS=5
+MAX_DOMAINS_IN_CERT=100
+
+# General settings
+SSL_USER="ssl"
+DOMAIN="$[Domain to append to subdomains]"
+SUBDOMAINFILE=./subdomains.txt

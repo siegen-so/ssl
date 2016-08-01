@@ -1,0 +1,238 @@
+#! /bin/sh
+########################################################################
+#
+# 2016-02-21
+# Leon Schürmann
+# dev@lschuermann.xyz
+#
+########################################################################
+#
+#	This program is free software: you can redistribute it and/or modify
+#	it under the terms of the GNU General Public License as published by
+#	the Free Software Foundation, either version 3 of the License, or
+#	(at your option) any later version.
+#
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
+#
+#	You should have received a copy of the GNU General Public License
+#	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+########################################################################
+#
+# This script issues letsencrypt-certificates based on subdomains
+# and inserts them into the webserver-config
+#
+########################################################################
+
+# Color codes
+GREEN='echo -en \033[32m'
+YELLOW='echo -en \033[1;33m'
+RED='echo -en \033[0;31m'
+NOCOLOR='echo -en \033[0m' # No Color
+
+$GREEN
+echo "Update-Certificates script."
+
+BASEDIR=$(dirname $0)
+cd $BASEDIR
+
+# Load configuration
+source ./config.sh
+
+# Check executing user and restart as correct one
+if [[ ! $(whoami) == $SSL_USER ]] ; then
+  $YELLOW
+  echo "Running script as \"$SSL_USER\" user, your sudo-password may be nescessary."
+  $NOCOLOR
+  sudo -H -u $SSL_USER sh $0 $@
+  exit $?
+fi
+
+# Clean subdomains-file
+sh ${BASEDIR}/cleanup-subdomains
+
+# Check if subdomains can be split onto certificates without exceeding limits
+if [[ $(cat $SUBDOMAINFILE | wc -l) -gt $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT - 1) ]] ; then
+  $RED
+  echo "There are too many subdomains for issuing certificates!"
+  echo
+  echo "There may be a maximum of $MAX_CERTS certficates containing $MAX_DOMAINS_IN_CERT subdomains each - 1 for the main-domain ($DOMAIN) ($MAX_CERTS * $MAX_DOMAINS_IN_CERT - 1)."
+  echo  "Please remove some of the subdomains ($(expr $(cat $SUBDOMAINFILE | wc -l) - $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT) + 1) subdomain(s) too much)!"
+  $NOCOLOR
+  exit 2
+fi
+
+# Limits are ok, preparing certificate-retrieval
+$GREEN
+echo "The CA-Limitations are fulfilled. Configuring ACME-client..."
+$NOCOLOR
+
+# Copy certain configuration-fileds from ./config.sh into le-client's config
+# TODO: Copy configuration-fields
+$GREEN
+echo "  => Configuration-file ready."
+$NOCOLOR
+
+# Configure domains.txt-file
+DOMAINCOUNTER=1
+DOMAINFILELINEBUF=""
+
+# If file containing domain-names already exists, delete it
+if [ -f "$LE_CLIENT_DOMAINFILE" ] ; then
+  rm "$LE_CLIENT_DOMAINFILE"
+fi
+
+# Adding domain to subdomains
+DOMAINS=""
+for SUBDOMAIN in $(cat $SUBDOMAINFILE) ; do
+  DOMAINS="${DOMAINS}${SUBDOMAIN}.${DOMAIN}\n"
+done
+
+# Add main-domain to domain-list
+DOMAINS="${DOMAIN}\n${DOMAINS}"
+
+# Insert subdomains in correct format, splitting them into different certificates
+for DOMAIN in $(echo -e $DOMAINS) ; do
+  DOMAINFILELINEBUF="${DOMAINFILELINEBUF} ${DOMAIN}"
+  DOMAINCOUNTER="$(expr $DOMAINCOUNTER + 1)"
+  if [[ $DOMAINCOUNTER -gt $MAX_DOMAINS_IN_CERT ]] ; then
+    # If max-amount of domains per cert is reached, write them into a line
+    echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
+    DOMAINFILELINEBUF=""
+    DOMAINCOUNTER=1
+  fi
+done
+# Write any domains left in the buffer to the file
+if [[ ! -z "$DOMAINFILELINEBUF" ]] ; then
+  echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
+fi
+
+$GREEN
+echo "  => Domains configured."
+$NOCOLOR
+
+# Configure letsencrypt.sh-certificate hooks for the needs of this shell shript
+# TODO: Configure hooks accordingly
+$GREEN
+echo "  => Hooks configured."
+$NOCOLOR
+
+# Put apache into issuance-mode so that certificates can be received
+$YELLOW
+echo "Putting Apache-Webserver into certificate-issuance mode, your sites may not be reachable for a moment!"
+sudo -n /usr/local/sbin/siegenso-ssl-issuancemode on
+$NOCOLOR
+
+if [ -f $CERTIFICATES_PATH_FILE ] ; then
+  $YELLOW
+  echo "Removing old auto-generated certificate-index as it would conflict."
+  rm "$CERTIFICATES_PATH_FILE"
+fi
+
+# Here comes the magic: Let the letsencrypt.sh-client do it's work
+$GREEN
+echo "Retrieving certificates. Hang on tight!"
+$NOCOLOR
+sh "$LE_CLIENT_EXECUTABLE" -c -f "$LE_CLIENT_CONFIGFILE"
+
+# Check if certificate-retrieval was successful, else exit with error-code 1
+if [[ "$?" != "0" ]] ; then
+  $RED
+  echo "Oh noes. There was an error while retrieving the certificates."
+  echo "Getting Apache out of issuance-mode and then exiting."
+  sudo -n /usr/local/sbin/siegenso-ssl-issuancemode off
+  $NOCOLOR
+  exit 1
+fi
+
+$YELLOW
+echo "Turning Apache Issuance-Mode off..."
+$NOCOLOR
+sudo -n /usr/local/sbin/siegenso-ssl-issuancemode off
+
+if [ ! -f $CERTIFICATES_PATH_FILE ] ; then
+  $RED
+  echo "Oh noes. The file containing paths to the certificates could not be found."
+  echo "This could be the result of letsencrypt.sh not running correctly but exiting with status 0,"
+  echo "or the hooks not being configured correctly. Exiting..."
+  $NOCOLOR
+  exit 1
+fi
+
+$GREEN
+echo "Certificates were received sucessfully! Checking for validity:"
+$NOCOLOR
+
+# Check all certificates for validty
+APPLY_CERTIFICATES_ARGUMENTS=""
+for CERTIFICATE_LINE in $(cat $CERTIFICATES_PATH_FILE) ; do
+  CERTIFICATE_CHAIN_FILE=$(echo "$CERTIFICATE_LINE" | cut -f1 -d ";")
+  CERTIFICATE_PRIVKEY_FILE=$(echo "$CERTIFICATE_LINE" | cut -f2 -d ";")
+  
+  if [ ! -f "$CERTIFICATE_CHAIN_FILE" ] ; then
+    $RED
+    echo "Oh noes. The certificate-chain file under \"$CERTIFICATE_CHAIN_FILE\" doesn't exist."
+    echo "Exiting..."
+    $NOCOLOR
+    exit 1
+  fi
+  if [ ! -f "$CERTIFICATE_PRIVKEY_FILE" ] ; then
+    $RED
+    echo "Oh noes. The certificate's private-key file under \"$CERTIFICATE_PRIVKEY_FILE\" doesn't exist."
+    echo "Exiting..."
+    $NOCOLOR
+    exit 1
+  fi
+
+  CERTIFICATE_CN=$(openssl x509 -noout -subject -in $CERTIFICATE_CHAIN_FILE | sed -n '/^subject/s/^.*CN=//p')
+  if [[ $? != 0 ]] ; then
+    $RED
+    echo "The certificate's CN could not be read by OpenSSL. Exiting..."
+    $NOCOLOR
+    exit 1
+  fi
+
+  $GREEN
+  echo "  - Checking certificate with CN \"$CERTIFICATE_CN\""
+  $NOCOLOR
+  /usr/local/bin/siegenso-ssl-check-certificate -v -c $CERTIFICATE_CHAIN_FILE -k $CERTIFICATE_PRIVKEY_FILE
+  if [[ $? != 0 ]] ; then
+    $RED
+    echo "    -> The retrieved certificate doesn't seem to be valid. Exiting..."
+    $NOCOLOR
+    exit 1
+  fi
+
+  $GREEN
+  echo "     -> The retrieved certificate seems to be valid!"
+  $NOCOLOR
+  
+  APPLY_CERTIFICATES_ARGUMENTS="${APPLY_CERTIFICATES_ARGUMENTS} $CERTIFICATE_CHAIN_FILE;$CERTIFICATE_PRIVKEY_FILE"
+done
+
+$GREEN
+echo "Removing certificate-index file."
+$NOCOLOR
+rm "$CERTIFICATES_PATH_FILE"
+
+$GREEN
+echo "Trying to insert certificates into Apache-Webserver. Hang on tight!"
+$NOCOLOR
+
+sudo -n /usr/local/sbin/siegenso-ssl-apply-certificates$APPLY_CERTIFICATES_ARGUMENTS
+
+if [[ $? != 0 ]] ; then
+  $RED
+  echo "Deploying of certificates failed. :( Please check! Exiting..."
+  $NOCOLOR
+  exit 1
+fi
+
+$GREEN
+echo "Certificates were applied successfully! Have a good day."
+$NOCOLOR
+
+exit 0

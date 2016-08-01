@@ -1,0 +1,73 @@
+#! /bin/sh
+########################################################################
+#
+# 2016-02-21
+# Leon Schürmann
+# dev@lschuermann.xyz
+#
+########################################################################
+#
+#	This program is free software: you can redistribute it and/or modify
+#	it under the terms of the GNU General Public License as published by
+#	the Free Software Foundation, either version 3 of the License, or
+#	(at your option) any later version.
+#
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
+#
+#	You should have received a copy of the GNU General Public License
+#	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+########################################################################
+#
+# This script adds a subdomain to the list for letsencrypt cert-issuance.
+#
+########################################################################
+
+BASEDIR=$(dirname $0)
+cd $BASEDIR
+source ./config.sh
+
+usage() {
+  echo "Usage: $0 <subdomain>"
+  echo "for example: $0 im.a.subdomain.of (without \"$DOMAIN\")"
+  exit 1
+}
+
+# Check executing user and restart as correct one
+if [[ ! $(whoami) == $SSL_USER ]] ; then
+  echo "Running script as correct user, your sudo-password may be nescessary."
+  sudo -H -u $SSL_USER sh $0 $@
+  exit $?
+fi
+
+# Subdomain to lowercase
+SUBDOMAIN="${1,,}"
+shift
+
+# If no domain entered
+if [[ "$SUBDOMAIN" =~ ^$ ]] ; then
+  usage
+fi
+
+# If domain doesn't match Regexp
+if [[ ! "$SUBDOMAIN" =~ ^[a-z0-9][a-z0-9.]{0,98}[a-z0-9]$ ]] ; then
+  echo "Entered subdomain \"$SUBDOMAIN\" invalid!"
+  exit 2
+fi
+
+# Subdomain is already in the file
+if grep -Fxq "$SUBDOMAIN" $SUBDOMAINFILE ; then
+  echo "Subdomain is already a candidate for the next cert-issuance!"
+  exit 3
+fi
+
+# Everything seems to be fine, add subdomain and sort file
+echo "$SUBDOMAIN" >> $SUBDOMAINFILE
+sort $SUBDOMAINFILE > "${SUBDOMAINFILE}.sorted"; mv "${SUBDOMAINFILE}.sorted" "${SUBDOMAINFILE}"
+
+echo "\"$SUBDOMAIN\" added successfully!"
+echo "Now, there are $(cat $SUBDOMAINFILE | wc -l) subdomains registered."
+exit 0
