@@ -31,43 +31,60 @@ cd $BASEDIR
 source ./config.sh
 
 usage() {
-  echo "Usage: $0 <subdomain>"
-  echo "for example: $0 im.a.subdomain.of (without \"$DOMAIN\")"
+  echo "Usage: $0 <subdomain> <domain>"
+  echo "for example: $0 im.a.subdomain.of domain.tld"
   exit 1
 }
 
 # Check executing user and restart as correct one
 if [[ ! $(whoami) == $SSL_USER ]] ; then
   echo "Running script as correct user, your sudo-password may be nescessary."
-  sudo -H -u $SSL_USER sh $0 $@
+  sudo -H -u $SSL_USER sh $0 "$@"
   exit $?
 fi
 
-# Subdomain to lowercase
+# All to lowercase
 SUBDOMAIN="${1,,}"
+DOMAIN="${2,,}"
 shift
 
 # If no domain entered
-if [[ "$SUBDOMAIN" =~ ^$ ]] ; then
+if [ "$SUBDOMAIN" == "" ] ; then
+  usage
+elif [ "$DOMAIN" == "" ] ; then
   usage
 fi
 
-# If domain doesn't match Regexp
+# If subdomain doesn't match Regexp
 if [[ ! "$SUBDOMAIN" =~ ^[a-z0-9][a-z0-9.]{0,98}[a-z0-9]$ ]] ; then
-  echo "Entered subdomain \"$SUBDOMAIN\" invalid!"
+  echo "Entered subdomain \"$SUBDOMAIN\" is invalid!"
   exit 2
 fi
 
+# If domain doesn't match regexp
+if [[ ! "$DOMAIN" =~ ^[a-z0-9]+[.][a-z0-9]+$ ]] ; then
+  echo "Entered domain \"$DOMAIN\" is invalid!"
+  exit 2
+fi
+
+# Create directory (if it doesn't exist)
+mkdir -p "$DOMAINFILES"
+DOMAINFILE="$DOMAINFILES/$DOMAIN"
+
+if [ ! -f "$DOMAINFILE" ] ; then
+  touch "$DOMAINFILE"
+fi
+
 # Subdomain is already in the file
-if grep -Fxq "$SUBDOMAIN" $SUBDOMAINFILE ; then
+if grep -Fxq "$SUBDOMAIN" "$DOMAINFILE" ; then
   echo "Subdomain is already a candidate for the next cert-issuance!"
   exit 3
 fi
 
 # Everything seems to be fine, add subdomain and sort file
-echo "$SUBDOMAIN" >> $SUBDOMAINFILE
-sort $SUBDOMAINFILE > "${SUBDOMAINFILE}.sorted"; mv "${SUBDOMAINFILE}.sorted" "${SUBDOMAINFILE}"
+echo "$SUBDOMAIN" >> "$DOMAINFILE"
+sort "$DOMAINFILE" > "${DOMAINFILE}.sorted"; mv "${DOMAINFILE}.sorted" "${DOMAINFILE}"
 
-echo "\"$SUBDOMAIN\" added successfully!"
-echo "Now, there are $(cat $SUBDOMAINFILE | wc -l) subdomains registered."
+echo "\"$SUBDOMAIN.$DOMAIN\" added successfully!"
+echo "Now, there are $(cat $DOMAINFILE | wc -l) subdomains of the domain \"$DOMAIN\" registered."
 exit 0

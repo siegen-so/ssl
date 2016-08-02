@@ -2,7 +2,7 @@
 *
 !/.gitignore
 
-!/add-subdomain
+!/add-domain
 !/update-certificates
 
 !/config.sh.example

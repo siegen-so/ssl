@@ -14,5 +14,4 @@ MAX_DOMAINS_IN_CERT=100
 
 # General settings
 SSL_USER="ssl"
-DOMAIN="$[Domain to append to subdomains]"
-SUBDOMAINFILE=./subdomains.txt
+DOMAINFILES=./domains

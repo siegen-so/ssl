@@ -42,6 +42,39 @@ cd $BASEDIR
 # Load configuration
 source ./config.sh
 
+addSubdomainsFromDomainFile () {
+  # Configure domains.txt-file
+  DOMAINCOUNTER=1
+  DOMAINFILELINEBUF=""
+  DOMAIN="$(basename "$1")"
+
+  # Adding domain to subdomains
+  DOMAINS=""
+  for SUBDOMAIN in $(cat "$1") ; do
+    DOMAINS="${DOMAINS}${SUBDOMAIN}.${DOMAIN}\n"
+  done
+
+  # Add main-domain to domain-list
+  DOMAINS="${DOMAIN}\n${DOMAINS}"
+
+  # Insert subdomains in correct format, splitting them into different certificates
+  for DOMAIN in $(echo -e $DOMAINS) ; do
+    DOMAINFILELINEBUF="${DOMAINFILELINEBUF} ${DOMAIN}"
+    DOMAINCOUNTER="$(expr $DOMAINCOUNTER + 1)"
+    if [[ $DOMAINCOUNTER -gt $MAX_DOMAINS_IN_CERT ]] ; then
+      # If max-amount of domains per cert is reached, write them into a line
+      echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
+      DOMAINFILELINEBUF=""
+      DOMAINCOUNTER=1
+    fi
+  done
+  # Write any domains left in the buffer to the file
+  if [[ ! -z "$DOMAINFILELINEBUF" ]] ; then
+    echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
+  fi
+}
+
+
 # Check executing user and restart as correct one
 if [[ ! $(whoami) == $SSL_USER ]] ; then
   $YELLOW
@@ -54,16 +87,17 @@ fi
 # Clean subdomains-file
 sh ${BASEDIR}/cleanup-subdomains
 
+# TODO: Reimplement this check
 # Check if subdomains can be split onto certificates without exceeding limits
-if [[ $(cat $SUBDOMAINFILE | wc -l) -gt $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT - 1) ]] ; then
-  $RED
-  echo "There are too many subdomains for issuing certificates!"
-  echo
-  echo "There may be a maximum of $MAX_CERTS certficates containing $MAX_DOMAINS_IN_CERT subdomains each - 1 for the main-domain ($DOMAIN) ($MAX_CERTS * $MAX_DOMAINS_IN_CERT - 1)."
-  echo  "Please remove some of the subdomains ($(expr $(cat $SUBDOMAINFILE | wc -l) - $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT) + 1) subdomain(s) too much)!"
-  $NOCOLOR
-  exit 2
-fi
+#if [[ $(cat $SUBDOMAINFILE | wc -l) -gt $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT - 1) ]] ; then
+#  $RED
+#  echo "There are too many subdomains for issuing certificates!"
+#  echo
+#  echo "There may be a maximum of $MAX_CERTS certficates containing $MAX_DOMAINS_IN_CERT subdomains each - 1 for the main-domain ($DOMAIN) ($MAX_CERTS * $MAX_DOMAINS_IN_CERT - 1)."
+#  echo  "Please remove some of the subdomains ($(expr $(cat $SUBDOMAINFILE | wc -l) - $(expr $MAX_CERTS \* $MAX_DOMAINS_IN_CERT) + 1) subdomain(s) too much)!"
+#  $NOCOLOR
+#  exit 2
+#fi
 
 # Limits are ok, preparing certificate-retrieval
 $GREEN
@@ -76,39 +110,21 @@ $GREEN
 echo "  => Configuration-file ready."
 $NOCOLOR
 
-# Configure domains.txt-file
-DOMAINCOUNTER=1
-DOMAINFILELINEBUF=""
-
 # If file containing domain-names already exists, delete it
 if [ -f "$LE_CLIENT_DOMAINFILE" ] ; then
   rm "$LE_CLIENT_DOMAINFILE"
 fi
 
-# Adding domain to subdomains
-DOMAINS=""
-for SUBDOMAIN in $(cat $SUBDOMAINFILE) ; do
-  DOMAINS="${DOMAINS}${SUBDOMAIN}.${DOMAIN}\n"
-done
-
-# Add main-domain to domain-list
-DOMAINS="${DOMAIN}\n${DOMAINS}"
-
-# Insert subdomains in correct format, splitting them into different certificates
-for DOMAIN in $(echo -e $DOMAINS) ; do
-  DOMAINFILELINEBUF="${DOMAINFILELINEBUF} ${DOMAIN}"
+DOMAINCOUNTER="0"
+DOMAINFILELIST="$DOMAINFILES"/*
+for DOMAINFILE in $DOMAINFILELIST
+do
   DOMAINCOUNTER="$(expr $DOMAINCOUNTER + 1)"
-  if [[ $DOMAINCOUNTER -gt $MAX_DOMAINS_IN_CERT ]] ; then
-    # If max-amount of domains per cert is reached, write them into a line
-    echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
-    DOMAINFILELINEBUF=""
-    DOMAINCOUNTER=1
-  fi
+  $GREEN
+  echo "($DOMAINCOUNTER) Processing subdomains of $(basename "$DOMAINFILE")"
+  $NOCOLOR
+  addSubdomainsFromDomainFile "$DOMAINFILE"
 done
-# Write any domains left in the buffer to the file
-if [[ ! -z "$DOMAINFILELINEBUF" ]] ; then
-  echo $DOMAINFILELINEBUF | xargs >> $LE_CLIENT_DOMAINFILE
-fi
 
 $GREEN
 echo "  => Domains configured."
@@ -171,7 +187,7 @@ APPLY_CERTIFICATES_ARGUMENTS=""
 for CERTIFICATE_LINE in $(cat $CERTIFICATES_PATH_FILE) ; do
   CERTIFICATE_CHAIN_FILE=$(echo "$CERTIFICATE_LINE" | cut -f1 -d ";")
   CERTIFICATE_PRIVKEY_FILE=$(echo "$CERTIFICATE_LINE" | cut -f2 -d ";")
-  
+
   if [ ! -f "$CERTIFICATE_CHAIN_FILE" ] ; then
     $RED
     echo "Oh noes. The certificate-chain file under \"$CERTIFICATE_CHAIN_FILE\" doesn't exist."
@@ -209,7 +225,7 @@ for CERTIFICATE_LINE in $(cat $CERTIFICATES_PATH_FILE) ; do
   $GREEN
   echo "     -> The retrieved certificate seems to be valid!"
   $NOCOLOR
-  
+
   APPLY_CERTIFICATES_ARGUMENTS="${APPLY_CERTIFICATES_ARGUMENTS} $CERTIFICATE_CHAIN_FILE;$CERTIFICATE_PRIVKEY_FILE"
 done
 
