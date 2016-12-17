@@ -1,4 +1,4 @@
-# ssl
+# ssl - *Currently unmaintained*
 A collection of shell-script to automate handling of letsencrypt-certificates.
 It can be used to manage
  - domains & subdomains
